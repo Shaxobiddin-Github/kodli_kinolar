@@ -9,7 +9,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Faylga saqlanadigan ma'lumotlar
-VIDEO_DATA_FILE = "video_map.json"
+from pymongo import MongoClient
+
+client = MongoClient(os.getenv("MONGODB_URI"))
+db = client["telegram_bot"]
+hashtag_to_video = db["videos"]
+
+# Ma'lumotni saqlash
+hashtag_to_video.insert_one({"hashtag": clean_hashtag, "chat_id": message.chat_id, "message_id": message.message_id})
+
+# Ma'lumotni o'qish
+video = hashtag_to_video.find_one({"hashtag": text})
 
 # Botni ishga tushirganingizda eski videolarni yuklash
 if os.path.exists(VIDEO_DATA_FILE):
@@ -23,7 +33,9 @@ else:
 # vaqtincha hashtaglarni saqlaymiz: {user_id: "#1234"}
 user_last_hashtag = {}
 
-TOKEN = '7560772282:AAHrigcEVe_zjKjwD_lkjFyFYtIqqLPaoHQ'  # bot token
+import os
+
+TOKEN = os.getenv("TOKEN")
 application = Application.builder().token(TOKEN).build()
 
 # Kanalga kelgan xabarlar
