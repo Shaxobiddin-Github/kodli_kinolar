@@ -3,39 +3,66 @@ import json
 import os
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from collections import defaultdict
+from github import Github
+import base64
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Faylga saqlanadigan ma'lumotlar
-from pymongo import MongoClient
+# GitHub sozlamalari
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+if not GITHUB_TOKEN:
+    raise ValueError("GITHUB_TOKEN muhit o'zgaruvchisi topilmadi!")
 
-client = MongoClient(os.getenv("MONGODB_URI"))
-db = client["telegram_bot"]
-hashtag_to_video = db["videos"]
+REPO_NAME = "Shaxobiddin-Github/kodli_kinolar"  # Sizning repozitoriy nomingiz
+FILE_PATH = "video_map.json"
 
-# Ma'lumotni saqlash
-hashtag_to_video.insert_one({"hashtag": clean_hashtag, "chat_id": message.chat_id, "message_id": message.message_id})
+# GitHub'dan faylni o'qish
+def load_video_data():
+    try:
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(REPO_NAME)
+        file_content = repo.get_contents(FILE_PATH)
+        data = json.loads(base64.b64decode(file_content.content).decode("utf-8"))
+        return {k: tuple(v) for k, v in data.items()}
+    except Exception as e:
+        logger.info(f"GitHub'dan fayl o'qishda xato: {e}")
+        return {}
 
-# Ma'lumotni o'qish
-video = hashtag_to_video.find_one({"hashtag": text})
+# GitHub'ga faylni saqlash
+def save_video_data(data):
+    try:
+        g = Github(GITHUB_TOKEN)
+        repo = g.get_repo(REPO_NAME)
+        # Fayl mavjud bo'lsa, uni yangilaymiz
+        try:
+            file_content = repo.get_contents(FILE_PATH)
+            repo.update_file(
+                FILE_PATH,
+                "Update video_map.json",
+                json.dumps(data, ensure_ascii=False),
+                file_content.sha
+            )
+        # Fayl mavjud bo'lmasa, yangisini yaratamiz
+        except:
+            repo.create_file(
+                FILE_PATH,
+                "Create video_map.json",
+                json.dumps(data, ensure_ascii=False)
+            )
+    except Exception as e:
+        logger.error(f"GitHub'ga fayl saqlashda xato: {e}")
 
-# Botni ishga tushirganingizda eski videolarni yuklash
-if os.path.exists(VIDEO_DATA_FILE):
-    with open(VIDEO_DATA_FILE, "r", encoding="utf-8") as f:
-        hashtag_to_video = json.load(f)
-        # Fayldan o‘qilganda tuple emas, faqat string bo‘ladi → to‘g‘rilash:
-        hashtag_to_video = {k: tuple(v) for k, v in hashtag_to_video.items()}
-else:
-    hashtag_to_video = {}
+hashtag_to_video = load_video_data()
 
-# vaqtincha hashtaglarni saqlaymiz: {user_id: "#1234"}
+# Vaqtincha hashtaglarni saqlaymiz
 user_last_hashtag = {}
 
-import os
-
+# TOKEN ni muhit o'zgaruvchisidan olish
 TOKEN = os.getenv("TOKEN")
+if not TOKEN:
+    raise ValueError("TOKEN muhit o'zgaruvchisi topilmadi!")
+
 application = Application.builder().token(TOKEN).build()
 
 # Kanalga kelgan xabarlar
@@ -44,7 +71,7 @@ async def channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message:
         return
 
-    user_id = message.chat_id  # kanalning chat_id
+    user_id = message.chat_id
     text = message.text
     video = message.video
 
@@ -58,13 +85,12 @@ async def channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info("Video keldi, lekin hashtag topilmadi.")
             return
 
-        clean_hashtag = hashtag.lstrip("#")  # "#1234" → "1234"
+        clean_hashtag = hashtag.lstrip("#")
         hashtag_to_video[clean_hashtag] = (message.chat_id, message.message_id)
         logger.info(f"Video va hashtag topildi: hashtag={clean_hashtag}, video_id={message.message_id}")
 
-        # 🎯 Video yangi qo'shilganda faylga saqlaymiz
-        with open(VIDEO_DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(hashtag_to_video, f)
+        # GitHub'ga saqlash
+        save_video_data(hashtag_to_video)
 
     else:
         logger.info("Xabar hashtag yoki video emas.")
